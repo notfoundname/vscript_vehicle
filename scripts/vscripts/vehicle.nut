@@ -1,4 +1,4 @@
-// by ficool2
+// by ficool2 edited by notfoundname
 
 Convars.SetValue("sv_turbophysics", 0);
 
@@ -7,6 +7,7 @@ const IN_BACK = 16;
 const IN_USE = 32;
 const IN_MOVELEFT = 512;
 const IN_MOVERIGHT = 1024;
+const MASK_IN_VEHICLE = 10245; // IN_ATTACK|IN_DUCK|IN_ATTACK2|IN_RELOAD
 const DMG_CRUSH = 1;
 const COLLISION_GROUP_PLAYER = 5;
 const COLLISION_GROUP_IN_VEHICLE = 10;
@@ -32,13 +33,14 @@ const DMG_VEHICLE = 16;
 		if (!player.IsAlive())
 			continue;
 		local scope = player.GetScriptScope();
-		if (scope.vehicle)
-		{
-			NetProps.SetPropInt(player, "m_Shared.m_nAirDucked", 8);
-			continue;
-		}
+		//
+		// if (scope.vehicle)
+		// {
+		//  	NetProps.SetPropInt(player, "m_Shared.m_nAirDucked", 8);
+		//  	continue;
+		//}
 		local buttons = NetProps.GetPropInt(player, "m_nButtons");		
-		if ((buttons & IN_USE) || player.IsUsingActionSlot())
+		if (buttons & IN_USE)
 		{	
 			// find vehicle under crosshair
 			local eye_pos = player.EyePosition();
@@ -131,6 +133,10 @@ function CanExit()
 	local maxs = driver.GetPlayerMaxs();
 	
 	local attachment = vehicle.LookupAttachment("vehicle_driver_exit");
+	if (!attachment)
+	{
+		attachment = vehicle.LookupAttachment("vehicle_passenger0_exit");
+	}
 	if (attachment > 0)
 	{
 		local attachment_origin = vehicle.GetAttachmentOrigin(attachment);
@@ -200,25 +206,25 @@ function Enter(player)
 	
 	local origin;
 	local attachment = vehicle.LookupAttachment("vehicle_driver_eyes");
+	if (!attachment)
+		attachment = vehicle.LookupAttachment("vehicle_passenger0_eyes");
 	if (attachment > 0)
 		origin = vehicle.GetAttachmentOrigin(attachment);
 	else
 		origin = vehicle.GetCenter();
-	origin.z -= 64.0;
+	origin.z -= 56.0;
 	driver.SetAbsOrigin(origin);
 	driver.SetAbsVelocity(Vector());
 	
 	driver.AcceptInput("SetParent", "!activator", vehicle, vehicle);
 	
 	driver.RemoveFlag(FL_DUCKING);
+	
+	NetProps.SetPropInt(driver, "m_afButtonDisabled", MASK_IN_VEHICLE);
 	NetProps.SetPropBool(driver, "m_Local.m_bDrawViewmodel", false);
-	NetProps.SetPropInt(driver, "m_Shared.m_nAirDucked", 8);
 	
 	NetProps.SetPropBool(driver, "pl.deadflag", true);
-	driver.AddCustomAttribute("disable weapon switch", 1, -1);
-	driver.AddCustomAttribute("no_attack", 1, -1);
-	driver.AddCustomAttribute("no_duck", 1, -1);
-		
+	
 	vehicle.AcceptInput("TurnOn", "", null, null)
 	EntFireByHandle(vehicle, "CallScriptFunction", "EnableExit", 1.0, null, null);
 }
@@ -229,9 +235,9 @@ function Exit(dead, teleport)
 	{	
 		if (!dead)
 			NetProps.SetPropBool(driver, "pl.deadflag", false);
-		driver.RemoveCustomAttribute("disable weapon switch");
-		driver.RemoveCustomAttribute("no_attack");
-		driver.RemoveCustomAttribute("no_duck");
+		//driver.RemoveCustomAttribute("disable weapon switch");
+		//driver.RemoveCustomAttribute("no_attack");
+		//driver.RemoveCustomAttribute("no_duck");
 		
 		driver.AcceptInput("ClearParent", "", null, null)
 		
@@ -253,14 +259,15 @@ function Exit(dead, teleport)
 		driver.SnapEyeAngles(fixup_angles);
 		driver.SetAbsVelocity(vehicle.GetPhysVelocity());		
 
+		NetProps.SetPropInt(driver, "m_afButtonDisabled", 0);
 		NetProps.SetPropBool(driver, "m_Local.m_bDrawViewmodel", true);
 		
-		local weapon = driver.GetActiveWeapon();
-		if (weapon)
-		{
-			NetProps.SetPropEntity(driver, "m_hActiveWeapon", null);
-			driver.Weapon_Switch(weapon);
-		}
+		//local weapon = driver.GetActiveWeapon();
+		//if (weapon)
+		//{
+		//	NetProps.SetPropEntity(driver, "m_hActiveWeapon", null);
+		//	driver.Weapon_Switch(weapon);
+		//}
 	
 		local driver_scope = driver.GetScriptScope();
 		driver_scope.vehicle = null;
@@ -299,10 +306,9 @@ function Think()
 		else if (buttons & IN_BACK)
 			NetProps.SetPropFloat(self, "m_VehiclePhysics.m_controls.throttle", -1);
 			
-		
 		if (can_exit)
 		{
-			if ((buttons & IN_USE) || driver.IsUsingActionSlot())
+			if (buttons & IN_USE)
 				Exit(false, true);
 		}
 			
@@ -325,13 +331,13 @@ if (!("VehicleEvents" in getroottable()))
 		if (!player)
 			return;
 		
-		if (params.team == 0) // unassigned
+		if (player.GetTeam() == 0) // unassigned
 		{
 			VehicleInitPlayer(player)
 			return;
 		}
 		
-		if (params.team & 2)
+		if (player.GetTeam() & 2)
 		{
 			// respawned while in a vehicle?
 			local vehicle_scope = player.GetScriptScope().vehicle_scope;
@@ -346,8 +352,6 @@ if (!("VehicleEvents" in getroottable()))
 	{
 		local player = GetPlayerFromUserID(params.userid);
 		if (!player)
-			return;
-		if (params.death_flags & 32) // dead ringer
 			return;
 			
 		local scope = player.GetScriptScope();
@@ -365,7 +369,8 @@ if (!("VehicleEvents" in getroottable()))
 		if (scope && scope.vehicle_scope)
 			scope.vehicle_scope.Exit(true, false);
 	}
-
+	
+	// this event probably does not exist
 	OnGameEvent_scorestats_accumulated_update = function(params)
 	{
 		for (local vehicle; vehicle = Entities.FindByClassname(vehicle, "prop_vehicle_driveable");)
@@ -381,7 +386,7 @@ if (!("VehicleEvents" in getroottable()))
 		{
 			// pass damage to driver
 			local driver = victim.GetScriptScope().driver;
-			if (driver)
+			if (driver && inflictor != driver)
 			{
 				driver.TakeDamageCustom(
 					params.inflictor, 
